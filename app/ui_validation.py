@@ -20,14 +20,10 @@ def validation_page(project_id: int) -> None:
     ui.label(f'Validation: {project.name}').classes('text-2xl font-bold mb-4')
 
     # Progress Bar / Stats
-    # Note: We need reactive state for this.
     stats_label = ui.label('Loading stats...')
 
     # If API mode, ensure worker is running?
     if project.mode == 'API':
-        # Simple check: Trigger worker once.
-        # In a real app, this should be a robust background service.
-        # Here we kick it off.
         token = project.mapping_config.get("api_token")
         asyncio.create_task(run_api_worker(project_id, token))
 
@@ -72,126 +68,86 @@ def validation_page(project_id: int) -> None:
                     ui.timer(2.0, load_next_task, once=True) # Poll
                     return
 
-                # Comparison Grid
-                with ui.grid(columns=2).classes('w-full gap-4'):
-                    # Target (Left)
-                    with ui.column():
-                        ui.label('TARGET (Original)').classes('font-bold border-b w-full')
-                        render_data_fields(task.target_data, task.candidate_data, "target")
+                # Get Field Map
+                field_map = project.mapping_config.get('field_map', {})
 
-                    # Source (Right)
-                    with ui.column():
-                        ui.label('SOURCE (Candidate)').classes('font-bold border-b w-full')
-                        if task.candidate_data:
-                            render_data_fields(task.candidate_data, task.target_data, "source", project.mapping_config.get('field_map'))
-                        else:
-                            ui.label('No Match Found').classes('text-red-500 italic')
+                # Container for Golden Inputs
+                golden_inputs: Dict[str, ui.input] = {}
+
+                def set_val(key: str, val: Any) -> None:
+                    if key in golden_inputs:
+                        golden_inputs[key].value = str(val)
+
+                def apply_all(source: str) -> None:
+                    for key, target_val in task.target_data.items():
+                        if source == 'A':
+                            set_val(key, target_val)
+                        elif source == 'B':
+                            source_field = field_map.get(key)
+                            if source_field and task.candidate_data:
+                                val = task.candidate_data.get(source_field)
+                                if val is not None:
+                                    set_val(key, val)
+
+                # Grid Layout (4 Columns)
+                with ui.grid(columns=4).classes('w-full gap-4 items-center'):
+                    # Headers
+                    ui.label('Field').classes('font-bold border-b')
+                    ui.label('Target (A)').classes('font-bold border-b')
+                    ui.label('Source (B)').classes('font-bold border-b')
+                    ui.label('Golden (C)').classes('font-bold border-b')
+
+                    # Iterate Target Keys
+                    for key, target_val in task.target_data.items():
+                        # 1. Field Name
+                        ui.label(key).classes('text-sm font-semibold')
+
+                        # 2. Target Value (A)
+                        t_val_str = str(target_val)
+                        ui.label(t_val_str).classes('cursor-pointer hover:text-blue-600 p-1 rounded hover:bg-gray-100').on('click', lambda k=key, v=target_val: set_val(k, v)).tooltip('Click to copy to Golden')
+
+                        # 3. Source Value (B)
+                        source_field = field_map.get(key)
+                        source_val = None
+                        bg_class = ""
+
+                        if source_field and task.candidate_data:
+                            source_val = task.candidate_data.get(source_field)
+                            # Highlight diff
+                            if str(source_val) != t_val_str:
+                                bg_class = "text-orange-600 font-medium"
+
+                        s_val_str = str(source_val) if source_val is not None else "-"
+
+                        lbl = ui.label(s_val_str).classes(f'cursor-pointer hover:text-blue-600 p-1 rounded hover:bg-gray-100 {bg_class}').tooltip('Click to copy to Golden')
+                        if source_val is not None:
+                            lbl.on('click', lambda k=key, v=source_val: set_val(k, v))
+
+                        # 4. Golden Value (C)
+                        # Initialize with Target Value
+                        inp = ui.input(value=t_val_str).classes('w-full')
+                        golden_inputs[key] = inp
 
                 # Actions
-                with ui.row().classes('mt-4 justify-center gap-4'):
-                    ui.button('Keep Target', color='grey', on_click=lambda: submit_decision(task.id, 'Keep Target'))
+                ui.separator().classes('my-4')
+                with ui.row().classes('w-full justify-between'):
+                    with ui.row():
+                        ui.button('Keep All A', on_click=lambda: apply_all('A')).classes('mr-2')
+                        ui.button('Keep All B', on_click=lambda: apply_all('B'))
 
-                    if task.candidate_data:
-                         ui.button('Accept Source', color='green', on_click=lambda: submit_decision(task.id, 'Accept Source'))
+                    ui.button('Confirm & Save', on_click=lambda: save_task(task.id, golden_inputs)).classes('bg-green-500 text-white')
 
-                    ui.button('Manual Edit', color='blue', on_click=lambda: open_edit_dialog(task))
+    def save_task(task_id: int, inputs: Dict[str, ui.input]) -> None:
+        final_data = {k: inp.value for k, inp in inputs.items()}
+        submit_decision(task_id, final_data)
 
-    def open_edit_dialog(task: ReconciliationTask) -> None:
-        with ui.dialog() as dialog, ui.card().classes('w-96'):
-            ui.label(f'Manual Edit (ID: {task.id})').classes('text-lg font-bold mb-2')
-
-            # Form container
-            edits = {}
-            scroll_area = ui.scroll_area().classes('h-64 border p-2 mb-4')
-
-            with scroll_area:
-                # Pre-fill with Target Data
-                for k, v in task.target_data.items():
-                    # We store the inputs in a dict
-                    edits[k] = ui.input(label=k, value=str(v)).classes('w-full')
-
-            def save_edits():
-                # Collect values
-                final_values = {k: inp.value for k, inp in edits.items()}
-
-                # Save
-                with Session(engine) as session:
-                    t = session.get(ReconciliationTask, task.id)
-                    if t:
-                        t.final_data = final_values
-                        t.decision = 'Manual Edit'
-                        t.status = 'Resolved'
-                        session.add(t)
-                        session.commit()
-
-                dialog.close()
-                load_next_task()
-
-            with ui.row().classes('w-full justify-end'):
-                ui.button('Cancel', color='grey', on_click=dialog.close)
-                ui.button('Save', color='blue', on_click=save_edits)
-
-        dialog.open()
-
-    def render_data_fields(data: Dict[str, Any], other_data: Optional[Dict[str, Any]], side: str, field_map: Optional[Dict[str, str]] = None) -> None:
-        # We need to know which fields to compare.
-        # If Target, show all keys.
-        # If Source, show keys that map to Target, or all?
-        # Let's show all keys in data for now, highlighting matches.
-
-        # Better approach based on requirement: "Diffing: Fields with differences must be visually highlighted"
-        # We rely on Field Map to know what compares to what.
-
-        map_rev = {v: k for k, v in field_map.items()} if field_map else {}
-
-        for k, v in data.items():
-            # Check for difference
-            is_diff = False
-            bg_class = ""
-
-            if side == "target":
-                # Is there a mapped source field?
-                mapped_src_field = field_map.get(k) if field_map else None
-                if mapped_src_field and other_data:
-                    src_val = other_data.get(mapped_src_field)
-                    if str(src_val) != str(v):
-                        is_diff = True
-                        bg_class = "bg-red-100"
-
-            elif side == "source":
-                 # Is this field mapped to a target field?
-                 mapped_target_field = map_rev.get(k)
-                 if mapped_target_field and other_data:
-                     target_val = other_data.get(mapped_target_field)
-                     if str(target_val) != str(v):
-                         is_diff = True
-                         bg_class = "bg-green-100" # Green for potential new value
-
-            with ui.row().classes(f'w-full justify-between {bg_class} p-1'):
-                ui.label(k).classes('font-semibold text-xs')
-                ui.label(str(v)).classes('text-sm truncate')
-
-    def submit_decision(task_id: int, decision: str) -> None:
+    def submit_decision(task_id: int, final_data: Dict[str, Any]) -> None:
         with Session(engine) as session:
             t = session.get(ReconciliationTask, task_id)
             if t:
-                t.decision = decision
+                t.decision = 'User Confirmed' # Generic decision label
                 t.status = 'Resolved'
-
-                # Logic for Final Data
-                if decision == 'Keep Target':
-                    t.final_data = t.target_data
-                elif decision == 'Accept Source':
-                    # Merge Source into Target based on map
-                    final = t.target_data.copy()
-                    map_cfg = project.mapping_config.get('field_map', {})
-                    src = t.candidate_data or {}
-
-                    for target_col, source_field in map_cfg.items():
-                        if source_field in src:
-                            final[target_col] = src[source_field]
-                    t.final_data = final
-
+                t.final_data = final_data
                 session.add(t)
                 session.commit()
 
