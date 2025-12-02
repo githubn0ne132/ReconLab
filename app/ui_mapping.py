@@ -82,7 +82,7 @@ def mapping_page(project_id: int) -> None:
     def update_selection(key: str, value: Any) -> None:
         selections[key] = value
 
-    def finish_setup() -> None:
+    async def finish_setup() -> None:
         # Validate
         if not selections['join_target']:
             ui.notify('Please select a Target Join Key', type='warning')
@@ -123,23 +123,14 @@ def mapping_page(project_id: int) -> None:
             session.commit()
 
         # Trigger Engine (Async to avoid blocking UI)
-        async def run_processing():
-            ui.notify('Processing data... Please wait.', type='info', timeout=None)
+        ui.notify('Processing data... Please wait.', type='info', timeout=None)
 
-            if project.mode == 'CSV':
-                await asyncio.to_thread(initialize_tasks_csv, project_id)
-            else:
-                await asyncio.to_thread(initialize_tasks_api_pre, project_id)
+        if project.mode == 'CSV':
+            await asyncio.to_thread(initialize_tasks_csv, project_id)
+        else:
+            await asyncio.to_thread(initialize_tasks_api_pre, project_id)
 
-            ui.notify('Processing Complete!')
-            ui.navigate.to(f'/validation/{project_id}')
-
-        # Run the async processing
-        # Since finish_setup is called by a button, we can just await it if finish_setup is async,
-        # or use run_javascript/asyncio.create_task.
-        # NiceGUI event handlers can be async.
-        # We need to make finish_setup async or call this task.
-        # Let's wrapping the call.
-        asyncio.create_task(run_processing())
+        ui.notify('Processing Complete!')
+        ui.navigate.to(f'/validation/{project_id}')
 
     ui.button('Finish & Start Processing', on_click=finish_setup).classes('bg-green-500 text-white mt-4')
