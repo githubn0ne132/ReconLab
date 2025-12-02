@@ -1,4 +1,4 @@
-from nicegui import ui, app
+from nicegui import ui, app, events
 from app.db import create_db_and_tables, engine
 from app.models import Project
 from app.duckdb_client import duckdb_client
@@ -115,14 +115,13 @@ def create_project():
 
     uploaded_files = {}
 
-    def handle_upload(e, type_):
+    async def handle_upload(e: events.UploadEventArguments, type_: str):
         # Save file to disk
-        local_path = Path("data") / e.name
+        local_path = Path("data") / e.file.name
         local_path.parent.mkdir(parents=True, exist_ok=True) # Ensure data dir
-        with open(local_path, 'wb') as f:
-            f.write(e.content.read())
+        await e.file.save(local_path)
         uploaded_files[type_] = local_path.absolute().as_posix()
-        ui.notify(f"Uploaded {e.name}")
+        ui.notify(f"Uploaded {e.file.name}")
 
     def create():
         if not name_input.value:
