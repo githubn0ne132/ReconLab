@@ -4,10 +4,11 @@ from app.db import engine
 from app.duckdb_client import duckdb_client
 from app.sirene import SireneClient
 from loguru import logger
+from typing import Optional, List, Dict, Any
 import json
 import asyncio
 
-def initialize_tasks_csv(project_id: int):
+def initialize_tasks_csv(project_id: int) -> None:
     """
     Initializes reconciliation tasks for a CSV-to-CSV project.
     Performs a Left Join in DuckDB and populates SQLite.
@@ -82,7 +83,7 @@ def initialize_tasks_csv(project_id: int):
             logger.error(f"Failed to initialize CSV tasks: {e}")
 
 
-def initialize_tasks_api_pre(project_id: int):
+def initialize_tasks_api_pre(project_id: int) -> None:
     """
     Initializes tasks for API mode.
     Loads Target rows into SQLite with candidate_data = None.
@@ -121,7 +122,7 @@ def initialize_tasks_api_pre(project_id: int):
         except Exception as e:
             logger.error(f"Failed to initialize API tasks: {e}")
 
-async def run_api_worker(project_id: int, token: Optional[str] = None):
+async def run_api_worker(project_id: int, token: Optional[str] = None) -> None:
     """
     Background worker to fetch API data for pending tasks.
     """
