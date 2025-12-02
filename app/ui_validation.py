@@ -4,10 +4,11 @@ from app.models import Project, ReconciliationTask
 from sqlmodel import Session, select
 from app.engine import run_api_worker
 import asyncio
+from typing import Dict, Any, Optional, List
 from loguru import logger
 
 @ui.page('/validation/{project_id}')
-def validation_page(project_id: int):
+def validation_page(project_id: int) -> None:
     # Check Project
     with Session(engine) as session:
         project = session.get(Project, project_id)
@@ -33,7 +34,7 @@ def validation_page(project_id: int):
     # Task Container (The Card)
     card_container = ui.column().classes('w-full')
 
-    def load_next_task():
+    def load_next_task() -> None:
         card_container.clear()
 
         with Session(engine) as session:
@@ -59,7 +60,7 @@ def validation_page(project_id: int):
             # Render Card
             render_task_card(task)
 
-    def render_task_card(task: ReconciliationTask):
+    def render_task_card(task: ReconciliationTask) -> None:
         with card_container:
             with ui.card().classes('w-full'):
                 ui.label(f'Task ID: {task.id}').classes('text-xs text-gray-400')
@@ -95,7 +96,7 @@ def validation_page(project_id: int):
 
                     ui.button('Manual Edit', color='blue', on_click=lambda: open_edit_dialog(task))
 
-    def open_edit_dialog(task: ReconciliationTask):
+    def open_edit_dialog(task: ReconciliationTask) -> None:
         with ui.dialog() as dialog, ui.card().classes('w-96'):
             ui.label(f'Manual Edit (ID: {task.id})').classes('text-lg font-bold mb-2')
 
@@ -132,7 +133,7 @@ def validation_page(project_id: int):
 
         dialog.open()
 
-    def render_data_fields(data, other_data, side, field_map=None):
+    def render_data_fields(data: Dict[str, Any], other_data: Optional[Dict[str, Any]], side: str, field_map: Optional[Dict[str, str]] = None) -> None:
         # We need to know which fields to compare.
         # If Target, show all keys.
         # If Source, show keys that map to Target, or all?
@@ -170,7 +171,7 @@ def validation_page(project_id: int):
                 ui.label(k).classes('font-semibold text-xs')
                 ui.label(str(v)).classes('text-sm truncate')
 
-    def submit_decision(task_id, decision):
+    def submit_decision(task_id: int, decision: str) -> None:
         with Session(engine) as session:
             t = session.get(ReconciliationTask, task_id)
             if t:

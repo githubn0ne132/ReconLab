@@ -6,10 +6,11 @@ from app.sirene import SireneClient
 from app.engine import initialize_tasks_csv, initialize_tasks_api_pre
 from sqlmodel import Session
 from loguru import logger
+from typing import List, Dict, Optional, Any
 import asyncio
 
 @ui.page('/mapping/{project_id}')
-def mapping_page(project_id: int):
+def mapping_page(project_id: int) -> None:
     with Session(engine) as session:
         project = session.get(Project, project_id)
         if not project:
@@ -32,7 +33,7 @@ def mapping_page(project_id: int):
         # Allow user to type custom if needed? For now strict list + maybe "Other"
 
     # State for selections
-    selections = {
+    selections: Dict[str, Any] = {
         'join_target': None,
         'join_source': None,
         'field_map': [] # List of {target, source}
@@ -78,10 +79,10 @@ def mapping_page(project_id: int):
 
         ui.button('Add Field Mapping', on_click=add_mapping_row).classes('mt-2')
 
-    def update_selection(key, value):
+    def update_selection(key: str, value: Any) -> None:
         selections[key] = value
 
-    def finish_setup():
+    def finish_setup() -> None:
         # Validate
         if not selections['join_target']:
             ui.notify('Please select a Target Join Key', type='warning')
