@@ -2,8 +2,9 @@ import duckdb
 from pathlib import Path
 from loguru import logger
 from typing import Optional, List, Dict, Any
+import os
 
-DUCKDB_FILE = Path("reconlab.duckdb")
+DUCKDB_FILE = Path(os.getenv("DUCKDB_FILE", "reconlab.duckdb"))
 
 class DuckDBClient:
     def __init__(self):

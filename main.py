@@ -64,7 +64,7 @@ def index():
         ''')
 
         def handle_delete(e):
-            row = e.args[0]
+            row = e.args
             with Session(engine) as session:
                 proj = session.get(Project, row['id'])
                 if proj:
@@ -78,7 +78,7 @@ def index():
             ui.navigate.reload()
 
         def handle_resume(e):
-            row = e.args[0]
+            row = e.args
             # Navigate based on status
             if row['status'] == 'Setup':
                 # Should not happen if created correctly, maybe go to mapping
