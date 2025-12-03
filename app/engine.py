@@ -1,4 +1,5 @@
-from sqlmodel import Session, select
+from sqlmodel import Session, select, or_
+from sqlalchemy import cast, String
 from app.models import Project, ReconciliationTask
 from app.db import engine
 from app.duckdb_client import duckdb_client
@@ -7,6 +8,7 @@ from loguru import logger
 from typing import Optional, List, Dict, Any
 import json
 import asyncio
+import os
 
 def initialize_tasks_csv(project_id: int) -> None:
     """
@@ -32,16 +34,6 @@ def initialize_tasks_csv(project_id: int) -> None:
             return
 
         # Perform Join in DuckDB
-        # We select everything from target (t) and source (s)
-        # We need to construct the query carefully to avoid column name collisions if we want to separate them later,
-        # but for simplicity, we can fetch as dicts.
-        # Actually, to store in "target_data" and "candidate_data", it's best to select them separately or struct them.
-
-        # DuckDB Struct approach:
-        # SELECT row_to_json(t) as target_json, row_to_json(s) as source_json
-        # FROM target t LEFT JOIN source s ON t.key = s.key
-        # Note: DuckDB has struct packing.
-
         query = f"""
         SELECT
             to_json(t) as target_json,
@@ -70,10 +62,9 @@ def initialize_tasks_csv(project_id: int) -> None:
                 )
                 tasks.append(task)
 
-            # Bulk insert might be faster, but SQLModel uses add_all
             session.add_all(tasks)
 
-            project.status = "Processing" # Or "Validation" if immediate
+            project.status = "Processing"
             session.add(project)
             session.commit()
 
@@ -129,14 +120,6 @@ async def run_api_worker(project_id: int, token: Optional[str] = None) -> None:
     logger.info(f"Starting API Worker for Project {project_id}")
     client = SireneClient(token)
 
-    # We need a new session for the thread/async task
-    # Note: SQLModel with async is tricky if not using AsyncSession.
-    # For simplicity in this local app, we will use sync session in short bursts or refactor if needed.
-    # NiceGUI runs on an event loop, so we can use async functions.
-
-    # We'll batch process or iterate
-    # Ideally, we fetch pending tasks from DB
-
     with Session(engine) as session:
         project = session.get(Project, project_id)
         if not project:
@@ -145,21 +128,17 @@ async def run_api_worker(project_id: int, token: Optional[str] = None) -> None:
         mapping = project.mapping_config
         target_key_col = mapping.get("join_key", {}).get("target")
 
-        # Get tasks where candidate_data is None (or status is Pending and we haven't tried?)
-        # For now, let's assume we process all "Pending" tasks that have no candidate data (and are API mode)
-        # But wait, if we process them, they might still be "Pending" validation.
-        # We need a flag or just check if candidate_data is empty?
-        # Actually the prompt says "Insert all... with candidate_data = null".
-
+        # Select tasks that have no candidate data.
+        # Handle both NULL (new behavior) and "null" string (legacy behavior).
         statement = select(ReconciliationTask).where(
             ReconciliationTask.project_id == project_id,
-            ReconciliationTask.candidate_data == None
+            or_(
+                ReconciliationTask.candidate_data == None,
+                cast(ReconciliationTask.candidate_data, String) == 'null'
+            )
         )
         tasks = session.exec(statement).all()
         logger.info(f"Found {len(tasks)} tasks to process via API.")
-
-    # We shouldn't keep the session open during long API calls.
-    # We process in chunks.
 
     chunk_size = 10
     total = len(tasks)
@@ -168,23 +147,44 @@ async def run_api_worker(project_id: int, token: Optional[str] = None) -> None:
         chunk = tasks[i:i+chunk_size]
 
         for task in chunk:
-            # Re-fetch task to attach to session if needed or just update by ID later
             target_val = task.target_data.get(target_key_col)
 
             if target_val:
                 logger.info(f"Fetching SIRET: {target_val}")
                 result = await client.get_by_siret(str(target_val))
 
-                # Update DB
                 with Session(engine) as session:
                     t_update = session.get(ReconciliationTask, task.id)
                     if t_update:
-                        t_update.candidate_data = result if result else {} # Empty dict if not found, to mark as processed?
-                        # Or keep None if we want to retry?
-                        # Let's use {} for "Not Found" to distinguish from "Not Attempted" (None)
+                        t_update.candidate_data = result if result else {}
                         session.add(t_update)
                         session.commit()
 
-                await asyncio.sleep(0.2) # Rate limiting respect (5 calls/sec roughly)
+                await asyncio.sleep(0.2)
 
     logger.info("API Worker Finished.")
+
+async def verify_api_connectivity():
+    """
+    Startup check to verify SIRENE API connectivity.
+    """
+    token = os.getenv("SIRENE_TOKEN")
+    if token:
+        logger.info("Verifying SIRENE API connectivity...")
+        client = SireneClient(token)
+        # Check specific SIRET
+        siret = "30133105400041"
+        try:
+            result = await client.get_by_siret(siret)
+            if result:
+                name = result.get("uniteLegale.denominationUniteLegale")
+                if name == "GLOBAL HYGIENE":
+                    logger.success("Startup API Verification SUCCESS: Found GLOBAL HYGIENE")
+                else:
+                    logger.warning(f"Startup API Verification: Found '{name}', expected 'GLOBAL HYGIENE'")
+            else:
+                logger.error("Startup API Verification FAILED: No result found")
+        except Exception as e:
+            logger.error(f"Startup API Verification EXCEPTION: {e}")
+    else:
+        logger.info("Skipping Startup API Verification (SIRENE_TOKEN not set)")
