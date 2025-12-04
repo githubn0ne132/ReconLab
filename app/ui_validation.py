@@ -17,7 +17,9 @@ def validation_page(project_id: int) -> None:
             return
 
     # Header
-    ui.label(f'Validation: {project.name}').classes('text-2xl font-bold mb-4')
+    with ui.row().classes('w-full justify-between items-center mb-4'):
+        ui.label(f'Validation: {project.name}').classes('text-2xl font-bold')
+        ui.button('Export CSV', on_click=lambda: ui.download(f'/export/{project_id}', filename=f'{project.name}_export.csv')).props('icon=download outline')
 
     # Progress Bar / Stats
     stats_label = ui.label('Loading stats...')
