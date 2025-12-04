@@ -3,7 +3,7 @@ from sqlalchemy import cast, String
 from app.models import Project, ReconciliationTask
 from app.db import engine
 from app.duckdb_client import duckdb_client
-from app.sirene import SireneClient
+from app.sirene import SireneClient, RateLimitExceeded
 from loguru import logger
 from typing import Optional, List, Dict, Any
 import json
@@ -151,14 +151,20 @@ async def run_api_worker(project_id: int, token: Optional[str] = None) -> None:
 
             if target_val:
                 logger.info(f"Fetching SIRET: {target_val}")
-                result = await client.get_by_siret(str(target_val))
+                try:
+                    result = await client.get_by_siret(str(target_val))
 
-                with Session(engine) as session:
-                    t_update = session.get(ReconciliationTask, task.id)
-                    if t_update:
-                        t_update.candidate_data = result if result else {}
-                        session.add(t_update)
-                        session.commit()
+                    with Session(engine) as session:
+                        t_update = session.get(ReconciliationTask, task.id)
+                        if t_update:
+                            t_update.candidate_data = result if result else {}
+                            session.add(t_update)
+                            session.commit()
+                except RateLimitExceeded as e:
+                    logger.warning(f"Worker rate limited. Sleeping for {e.retry_after}s")
+                    await asyncio.sleep(e.retry_after)
+                except Exception as e:
+                    logger.error(f"Worker error for {target_val}: {e}")
 
                 await asyncio.sleep(0.2)
 

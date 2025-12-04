@@ -3,6 +3,14 @@ from typing import Dict, Any, List, Optional
 from loguru import logger
 import asyncio
 
+class RateLimitExceeded(Exception):
+    """
+    Exception raised when the API rate limit is exceeded (HTTP 429).
+    """
+    def __init__(self, retry_after: int = 60):
+        self.retry_after = retry_after
+        super().__init__(f"Rate limit exceeded. Retry after {retry_after} seconds.")
+
 class SireneClient:
     BASE_URL = "https://api.insee.fr/api-sirene/3.11"
 
@@ -45,6 +53,7 @@ class SireneClient:
     async def get_by_siret(self, siret: str) -> Optional[Dict[str, Any]]:
         """
         Fetches establishment data by SIRET. Returns a flattened dictionary.
+        Raises RateLimitExceeded if HTTP 429 is encountered.
         """
         url = f"{self.BASE_URL}/siret/{siret}"
         try:
@@ -63,10 +72,19 @@ class SireneClient:
                     return None
                 elif response.status_code == 429:
                     logger.warning("Rate limit exceeded.")
-                    return None
+                    # Try to parse Retry-After header, default to 60s
+                    retry_after = 60
+                    if "Retry-After" in response.headers:
+                        try:
+                            retry_after = int(response.headers["Retry-After"])
+                        except ValueError:
+                            pass
+                    raise RateLimitExceeded(retry_after)
                 else:
                     logger.error(f"API Error {response.status_code}: {response.text}")
                     return None
+        except RateLimitExceeded:
+            raise
         except Exception as e:
             logger.error(f"Request failed: {e}")
             return None
