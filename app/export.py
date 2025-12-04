@@ -52,6 +52,11 @@ def export_project(project_id: int):
                     status_val = "Modified"
                 elif task.decision == 'Manual Edit':
                     status_val = "Modified"
+                elif task.decision == 'User Confirmed':
+                    if task.final_data == task.target_data:
+                        status_val = "Original"
+                    else:
+                        status_val = "Modified"
 
             row_data["_recon_status"] = status_val
 

@@ -1,13 +1,13 @@
 from nicegui import ui, app as nicegui_app, events
 from app.db import create_db_and_tables, engine
-from app.models import Project
+from app.models import Project, ReconciliationTask
 from app.duckdb_client import duckdb_client
 from app.engine import initialize_tasks_csv, initialize_tasks_api_pre, run_api_worker, verify_api_connectivity
 # Import new pages
 import app.ui_mapping
 import app.ui_validation
 import app.export # Register export route
-from sqlmodel import Session, select
+from sqlmodel import Session, select, delete
 import asyncio
 from pathlib import Path
 import os
@@ -75,6 +75,10 @@ def index():
                     duckdb_client.drop_table(proj.target_table_name)
                     if proj.source_table_name:
                         duckdb_client.drop_table(proj.source_table_name)
+
+                    # Delete associated tasks
+                    session.exec(delete(ReconciliationTask).where(ReconciliationTask.project_id == proj.id))
+
                     session.delete(proj)
                     session.commit()
             ui.notify(f"Deleted project {row['id']}")
