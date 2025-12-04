@@ -1,8 +1,8 @@
-from nicegui import ui, app, events
+from nicegui import ui, app as nicegui_app, events
 from app.db import create_db_and_tables, engine
 from app.models import Project
 from app.duckdb_client import duckdb_client
-from app.engine import initialize_tasks_csv, initialize_tasks_api_pre, run_api_worker
+from app.engine import initialize_tasks_csv, initialize_tasks_api_pre, run_api_worker, verify_api_connectivity
 # Import new pages
 import app.ui_mapping
 import app.ui_validation
@@ -14,6 +14,9 @@ import os
 
 # Initialize DB
 create_db_and_tables()
+
+# Register startup check
+nicegui_app.on_startup(verify_api_connectivity)
 
 # Store state
 class State:
@@ -101,15 +104,44 @@ def create_project():
 
     name_input = ui.input('Project Name').classes('w-full mb-2')
 
+    # Formatting Recommendations
+    with ui.expansion('CSV Formatting Recommendations', icon='help', value=False).classes('w-full mb-4 bg-blue-50'):
+        ui.markdown('''
+        **Recommended Format:**
+        - **Encoding:** UTF-8
+        - **Delimiter:** Comma (`,`), Semicolon (`;`), or Pipe (`|`)
+        - **Header:** First row should contain column names.
+
+        *Note: The system attempts to auto-detect these settings. Use the manual configuration below if detection fails.*
+        ''')
+
+    # Common Options
+    delimiter_options = {'Auto': 'Auto-detect', ',': 'Comma (,)', ';': 'Semicolon (;)', '|': 'Pipe (|)', '\t': 'Tab'}
+    encoding_options = {'Auto': 'Auto-detect', 'UTF-8': 'UTF-8', 'LATIN-1': 'Latin-1', 'ISO-8859-1': 'ISO-8859-1'}
+
     # Step 2: Target
     ui.label('Step 2: Upload Target CSV').classes('text-lg mt-4')
+
+    with ui.expansion('Advanced: Target CSV Options', icon='settings').classes('w-full mb-2'):
+        target_delimiter = ui.select(delimiter_options, value='Auto', label='Delimiter').classes('w-full')
+        target_encoding = ui.select(encoding_options, value='Auto', label='Encoding').classes('w-full')
+        target_skip = ui.number('Rows to Skip', value=0, min=0).classes('w-full')
+        target_header = ui.switch('Has Header', value=True)
+
     target_uploader = ui.upload(label="Target CSV", auto_upload=True, on_upload=lambda e: handle_upload(e, 'target')).classes('w-full')
 
     # Step 3: Source
     ui.label('Step 3: Select Source').classes('text-lg mt-4')
     source_type = ui.radio(['CSV', 'API'], value='CSV').classes('mb-2')
 
-    source_uploader = ui.upload(label="Source CSV", auto_upload=True, on_upload=lambda e: handle_upload(e, 'source')).bind_visibility_from(source_type, 'value', value='CSV').classes('w-full')
+    with ui.column().bind_visibility_from(source_type, 'value', value='CSV').classes('w-full'):
+        with ui.expansion('Advanced: Source CSV Options', icon='settings').classes('w-full mb-2'):
+            source_delimiter = ui.select(delimiter_options, value='Auto', label='Delimiter').classes('w-full')
+            source_encoding = ui.select(encoding_options, value='Auto', label='Encoding').classes('w-full')
+            source_skip = ui.number('Rows to Skip', value=0, min=0).classes('w-full')
+            source_header = ui.switch('Has Header', value=True)
+
+        source_uploader = ui.upload(label="Source CSV", auto_upload=True, on_upload=lambda e: handle_upload(e, 'source')).classes('w-full')
 
     api_token = ui.input('SIRENE API Token (Optional)').bind_visibility_from(source_type, 'value', value='API')
 
@@ -149,15 +181,32 @@ def create_project():
             # Ingest Data
             proj_id = project.id
 
+            # Helper for options
+            def get_opt(val): return None if val == 'Auto' else val
+
             # Target
             target_table = f"proj_{proj_id}_target"
-            duckdb_client.ingest_csv(target_table, uploaded_files['target'])
+            duckdb_client.ingest_csv(
+                target_table,
+                uploaded_files['target'],
+                delimiter=get_opt(target_delimiter.value),
+                encoding=get_opt(target_encoding.value),
+                skip=int(target_skip.value or 0),
+                has_header=target_header.value
+            )
             project.target_table_name = target_table
 
             # Source
             if source_type.value == 'CSV':
                 source_table = f"proj_{proj_id}_source"
-                duckdb_client.ingest_csv(source_table, uploaded_files['source'])
+                duckdb_client.ingest_csv(
+                    source_table,
+                    uploaded_files['source'],
+                    delimiter=get_opt(source_delimiter.value),
+                    encoding=get_opt(source_encoding.value),
+                    skip=int(source_skip.value or 0),
+                    has_header=source_header.value
+                )
                 project.source_table_name = source_table
 
             session.add(project)

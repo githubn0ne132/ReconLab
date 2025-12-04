@@ -11,7 +11,7 @@ class DuckDBClient:
         self.conn = duckdb.connect(str(DUCKDB_FILE))
         logger.info(f"Connected to DuckDB at {DUCKDB_FILE}")
 
-    def ingest_csv(self, table_name: str, csv_path: str):
+    def ingest_csv(self, table_name: str, csv_path: str, delimiter: str = None, encoding: str = None, skip: int = None, has_header: bool = None):
         """
         Ingests a CSV file into a DuckDB table using read_csv_auto.
         """
@@ -19,10 +19,23 @@ class DuckDBClient:
             # Drop table if exists
             self.conn.execute(f"DROP TABLE IF EXISTS {table_name}")
 
+            # Build options string
+            options = ["auto_detect=True", "normalize_names=True"]
+            if delimiter:
+                options.append(f"delim='{delimiter}'")
+            if encoding:
+                options.append(f"encoding='{encoding}'")
+            if skip is not None:
+                options.append(f"skip={skip}")
+            if has_header is not None:
+                options.append(f"header={str(has_header).lower()}")
+
+            options_str = ", ".join(options)
+
             # Create table and insert data
             query = f"""
             CREATE TABLE {table_name} AS
-            SELECT * FROM read_csv_auto('{csv_path}', normalize_names=True)
+            SELECT * FROM read_csv('{csv_path}', {options_str})
             """
             self.conn.execute(query)
             logger.info(f"Successfully ingested {csv_path} into {table_name}")
