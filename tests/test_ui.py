@@ -44,6 +44,9 @@ def app_server():
     if "PYTEST_CURRENT_TEST" in env:
         del env["PYTEST_CURRENT_TEST"]
 
+    # Use a separate DuckDB file for the subprocess to avoid locking conflicts
+    env["DUCKDB_FILE"] = "test_ui.duckdb"
+
     proc = subprocess.Popen(
         ["uv", "run", "main.py"],
         stdout=subprocess.PIPE,

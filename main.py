@@ -1,8 +1,8 @@
-from nicegui import ui, app, events
+from nicegui import ui, app as nicegui_app, events
 from app.db import create_db_and_tables, engine
 from app.models import Project
 from app.duckdb_client import duckdb_client
-from app.engine import initialize_tasks_csv, initialize_tasks_api_pre, run_api_worker
+from app.engine import initialize_tasks_csv, initialize_tasks_api_pre, run_api_worker, verify_api_connectivity
 # Import new pages
 import app.ui_mapping
 import app.ui_validation
@@ -14,6 +14,9 @@ import os
 
 # Initialize DB
 create_db_and_tables()
+
+# Register startup check
+nicegui_app.on_startup(verify_api_connectivity)
 
 # Store state
 class State:
