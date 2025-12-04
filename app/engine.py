@@ -172,19 +172,9 @@ async def verify_api_connectivity():
     if token:
         logger.info("Verifying SIRENE API connectivity...")
         client = SireneClient(token)
-        # Check specific SIRET
-        siret = "30133105400041"
-        try:
-            result = await client.get_by_siret(siret)
-            if result:
-                name = result.get("uniteLegale.denominationUniteLegale")
-                if name == "GLOBAL HYGIENE":
-                    logger.success("Startup API Verification SUCCESS: Found GLOBAL HYGIENE")
-                else:
-                    logger.warning(f"Startup API Verification: Found '{name}', expected 'GLOBAL HYGIENE'")
-            else:
-                logger.error("Startup API Verification FAILED: No result found")
-        except Exception as e:
-            logger.error(f"Startup API Verification EXCEPTION: {e}")
+        if await client.check_connection():
+            logger.success("Startup API Verification SUCCESS: Connection established.")
+        else:
+            logger.error("Startup API Verification FAILED: Could not connect to /informations endpoint.")
     else:
         logger.info("Skipping Startup API Verification (SIRENE_TOKEN not set)")

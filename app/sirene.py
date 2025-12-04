@@ -4,11 +4,14 @@ from loguru import logger
 import asyncio
 
 class SireneClient:
-    BASE_URL = "https://api.insee.fr/entreprises/sirene/V3.11"
+    BASE_URL = "https://api.insee.fr/api-sirene/3.11"
 
-    def __init__(self, token: Optional[str] = None):
-        self.token = token
-        self.headers = {"Authorization": f"Bearer {token}"} if token else {}
+    def __init__(self, api_key: Optional[str] = None):
+        self.api_key = api_key
+        self.headers = {
+            "X-INSEE-Api-Key-Integration": api_key,
+            "Accept": "application/json"
+        } if api_key else {}
 
     def flatten_json(self, y: Dict, parent_key: str = '', sep: str = '.') -> Dict:
         """
@@ -22,6 +25,22 @@ class SireneClient:
             else:
                 items.append((new_key, v))
         return dict(items)
+
+    async def check_connection(self) -> bool:
+        """
+        Checks connectivity to the SIRENE API using the /informations endpoint.
+        """
+        url = f"{self.BASE_URL}/informations"
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, headers=self.headers, timeout=5.0)
+                if response.status_code == 200:
+                    return True
+                logger.error(f"API Connection Check Failed: {response.status_code} {response.text}")
+                return False
+        except Exception as e:
+            logger.error(f"API Connection Check Exception: {e}")
+            return False
 
     async def get_by_siret(self, siret: str) -> Optional[Dict[str, Any]]:
         """
@@ -40,7 +59,7 @@ class SireneClient:
                         return self.flatten_json(data["etablissement"])
                     return self.flatten_json(data) # Fallback
                 elif response.status_code == 404:
-                    logger.warning(f"SIRET {siret} not found.")
+                    logger.warning(f"SIRET {siret} not found. {response.text}")
                     return None
                 elif response.status_code == 429:
                     logger.warning("Rate limit exceeded.")
