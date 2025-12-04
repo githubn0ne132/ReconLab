@@ -2,7 +2,7 @@ from nicegui import ui
 from app.db import engine
 from app.models import Project, ReconciliationTask
 from sqlmodel import Session, select
-from app.engine import run_api_worker
+from app.sirene import SireneClient, RateLimitExceeded
 import asyncio
 from typing import Dict, Any, Optional, List
 from loguru import logger
@@ -22,15 +22,16 @@ def validation_page(project_id: int) -> None:
     # Progress Bar / Stats
     stats_label = ui.label('Loading stats...')
 
-    # If API mode, ensure worker is running?
+    # Client for API mode
+    client = None
     if project.mode == 'API':
         token = project.mapping_config.get("api_token")
-        asyncio.create_task(run_api_worker(project_id, token))
+        client = SireneClient(token)
 
     # Task Container (The Card)
     card_container = ui.column().classes('w-full')
 
-    def load_next_task() -> None:
+    async def load_next_task() -> None:
         card_container.clear()
 
         with Session(engine) as session:
@@ -53,20 +54,42 @@ def validation_page(project_id: int) -> None:
                     ui.button('Export Results', on_click=lambda: ui.download(f'/export/{project_id}', filename=f'{project.name}_export.csv'))
                 return
 
-            # Render Card
-            render_task_card(task)
+        # Check and fetch API data if needed
+        if project.mode == 'API' and not task.candidate_data:
+            target_key = project.mapping_config.get("join_key", {}).get("target")
+            siret = task.target_data.get(target_key)
+            if siret and client:
+                with card_container:
+                    ui.label(f'Fetching data for {siret}...').classes('text-blue-500 animate-pulse')
+
+                while True:
+                    try:
+                        data = await client.get_by_siret(str(siret))
+                        with Session(engine) as session:
+                            t = session.get(ReconciliationTask, task.id)
+                            if t:
+                                t.candidate_data = data if data else {}
+                                session.add(t)
+                                session.commit()
+                                task.candidate_data = t.candidate_data # Sync local object
+                        break
+                    except RateLimitExceeded as e:
+                        with card_container:
+                            ui.label(f"Rate limit exceeded. Waiting {e.retry_after}s...").classes('text-orange-500')
+                        await asyncio.sleep(e.retry_after)
+                    except Exception as e:
+                        ui.notify(f"Error fetching data: {e}", type='negative')
+                        break
+
+                card_container.clear()
+
+        # Render Card
+        render_task_card(task)
 
     def render_task_card(task: ReconciliationTask) -> None:
         with card_container:
             with ui.card().classes('w-full'):
                 ui.label(f'Task ID: {task.id}').classes('text-xs text-gray-400')
-
-                # Check if API is still loading (candidate is None and API mode)
-                if project.mode == 'API' and task.candidate_data is None:
-                    ui.spinner('dots', size='lg')
-                    ui.label('Fetching from API...')
-                    ui.timer(2.0, load_next_task, once=True) # Poll
-                    return
 
                 # Get Field Map
                 field_map = project.mapping_config.get('field_map', {})
@@ -137,11 +160,11 @@ def validation_page(project_id: int) -> None:
 
                     ui.button('Confirm & Save', on_click=lambda: save_task(task.id, golden_inputs)).classes('bg-green-500 text-white')
 
-    def save_task(task_id: int, inputs: Dict[str, ui.input]) -> None:
+    async def save_task(task_id: int, inputs: Dict[str, ui.input]) -> None:
         final_data = {k: inp.value for k, inp in inputs.items()}
-        submit_decision(task_id, final_data)
+        await submit_decision(task_id, final_data)
 
-    def submit_decision(task_id: int, final_data: Dict[str, Any]) -> None:
+    async def submit_decision(task_id: int, final_data: Dict[str, Any]) -> None:
         with Session(engine) as session:
             t = session.get(ReconciliationTask, task_id)
             if t:
@@ -151,7 +174,7 @@ def validation_page(project_id: int) -> None:
                 session.add(t)
                 session.commit()
 
-        load_next_task()
+        await load_next_task()
 
     # Initial Load
-    load_next_task()
+    ui.timer(0.1, load_next_task, once=True)
